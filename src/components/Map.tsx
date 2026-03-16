@@ -4,19 +4,37 @@ import { useState } from "react";
 import { MapContainer, TileLayer, useMap, useMapEvents, Circle, CircleMarker, Popup } from "react-leaflet";
 import "leaflet/dist/leaflet.css";
 
+// 1. Updated Interfaces
+interface FogPoint {
+  lat: number;
+  lon: number;
+  elevation: number;    // Added this
+  valley_score: number; // Added this
+  fog_scores: number[];
+  fog_top_asl: number[];
+  fog_base_asl: number[];
+}
+
+interface Peak {
+  lat: number;
+  lon: number;
+  elevation_m: number;
+  viewshed_score: number;
+}
+
 // --- This is our main control that talks to Modal ---
 function WeatherAndPeaksControl() {
   const map = useMap();
   
   // --- FOG STATE ---
   const [isFogLoading, setIsFogLoading] = useState(false);
-  const [fogGrid, setFogGrid] = useState<any[]>([]);
+  const [fogGrid, setFogGrid] = useState<FogPoint[]>([]);
   const [times, setTimes] = useState<string[]>([]);
   const [currentHourIndex, setCurrentHourIndex] = useState(0);
 
   // --- PEAK STATE ---
   const [isPeaksLoading, setIsPeaksLoading] = useState(false);
-  const [peaks, setPeaks] = useState<any[]>([]);
+  const [peaks, setPeaks] = useState<Peak[]>([]);
 
   // --- MAP STATE ---
   const [zoomLevel, setZoomLevel] = useState(map.getZoom());
@@ -76,7 +94,7 @@ function WeatherAndPeaksControl() {
 
       if (data.status === "success" && data.peaks) {
         // We still keep this filter just to make sure we don't draw peaks just outside the screen edges
-        const visiblePeaks = data.peaks.filter((peak: any) => 
+        const visiblePeaks = data.peaks.filter((peak: Peak) => 
           bounds.contains([peak.lat, peak.lon])
         );
 
@@ -183,21 +201,18 @@ function WeatherAndPeaksControl() {
       {peaks.map((peak, index) => {
         const isTopPeak = index === 0;
 
-        // 1. Find the nearest fog grid point (if fog data exists)
-        let nearestFogPoint = null;
-        let minDistance = Infinity;
-
+        // 1. Find the nearest fog grid point using .reduce() so TypeScript doesn't lose the type
+        let nearestFogPoint: FogPoint | null = null;
+        
         if (fogGrid && fogGrid.length > 0) {
-          fogGrid.forEach(point => {
-            const dist = Math.pow(point.lat - peak.lat, 2) + Math.pow(point.lon - peak.lon, 2);
-            if (dist < minDistance) {
-              minDistance = dist;
-              nearestFogPoint = point;
-            }
-          });
+          nearestFogPoint = fogGrid.reduce((closest: FogPoint, current: FogPoint) => {
+            const distClosest = Math.pow(closest.lat - peak.lat, 2) + Math.pow(closest.lon - peak.lon, 2);
+            const distCurrent = Math.pow(current.lat - peak.lat, 2) + Math.pow(current.lon - peak.lon, 2);
+            return distCurrent < distClosest ? current : closest;
+          }, fogGrid[0]); // Pass the first item as the initial value to guarantee type safety
         }
 
-        // 2. Default Status (If "Find Fog" hasn't been clicked yet)
+        // 2. Default Status
         let status = { text: "No Fog Data", color: "bg-gray-100 text-gray-500 border border-gray-200" };
         let heightDiffText = "N/A";
         let heightDiffColor = "text-gray-500";
@@ -205,9 +220,12 @@ function WeatherAndPeaksControl() {
 
         // 3. Evaluate Fog IF data is loaded
         if (nearestFogPoint) {
-          const currentFogProb = nearestFogPoint.fog_scores?.[currentHourIndex] || 0;
-          const currentFogTop = nearestFogPoint.fog_top_asl?.[currentHourIndex];
-          const currentFogBase = nearestFogPoint.fog_base_asl?.[currentHourIndex];
+          // Force TypeScript to recognize the type just to be absolutely safe
+          const safePoint = nearestFogPoint as FogPoint;
+          
+          const currentFogProb = safePoint.fog_scores?.[currentHourIndex] || 0;
+          const currentFogTop = safePoint.fog_top_asl?.[currentHourIndex];
+          const currentFogBase = safePoint.fog_base_asl?.[currentHourIndex];
 
           // If fog chance is low, it's clear
           if (currentFogProb < 0.3) {
@@ -232,7 +250,6 @@ function WeatherAndPeaksControl() {
                 heightDiffColor = "text-gray-600";
               }
             } else {
-              // High fog chance, but the weather API didn't give us a top height
               status = { text: "Fog Expected", color: "bg-gray-400 text-white" };
               showFogDetails = false; 
             }
@@ -269,13 +286,13 @@ function WeatherAndPeaksControl() {
                   </div>
                 </div>
 
-                {/* Fog Comparison Info (Only show if fog is present and heights exist) */}
-                {showFogDetails && (
+                {/* Fog Comparison Info */}
+                {showFogDetails && nearestFogPoint && (
                   <div className="bg-gray-50 p-2 rounded-lg flex flex-col gap-1 border border-gray-100">
                     <div className="flex justify-between text-xs">
                       <span className="text-gray-500">Fog Top Level:</span>
                       <span className="font-bold">
-                        {nearestFogPoint?.fog_top_asl?.[currentHourIndex]?.toFixed(0)}m
+                        {(nearestFogPoint as FogPoint).fog_top_asl?.[currentHourIndex]?.toFixed(0)}m
                       </span>
                     </div>
                     <div className="flex justify-between text-xs border-t border-gray-200 pt-1 mt-1">
@@ -301,9 +318,9 @@ function WeatherAndPeaksControl() {
                   </div>
                 </div>
 
-                {/* Navigation Button */}
+                {/* Navigation Button (Fixed Maps URL) */}
                 <button 
-                  onClick={() => window.open(`https://www.google.com/maps/dir/?api=1&destination=${peak.lat},${peak.lon}`, '_blank')}
+                  onClick={() => window.open(`https://maps.google.com/?q=${peak.lat},${peak.lon}`, '_blank')}
                   className="mt-2 w-full bg-gray-900 text-white text-[11px] py-2 rounded font-semibold hover:bg-black transition-colors"
                 >
                   Navigate to Peak
